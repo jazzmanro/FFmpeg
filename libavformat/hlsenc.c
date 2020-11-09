@@ -1544,7 +1544,7 @@ static int hls_window(AVFormatContext *s, int last, VariantStream *vs)
 
     vs->discontinuity_set = 0;
     ff_hls_write_playlist_header(byterange_mode ? hls->m3u8_out : vs->out, hls->version, hls->allowcache,
-                                 target_duration, sequence, hls->pl_type, hls->flags & HLS_I_FRAMES_ONLY);
+                                 target_duration, hls->max_nb_segments == 0 ? 0 : sequence, hls->pl_type, hls->flags & HLS_I_FRAMES_ONLY);
 
     if ((hls->flags & HLS_DISCONT_START) && sequence==hls->start_sequence && vs->discontinuity_set==0) {
         avio_printf(byterange_mode ? hls->m3u8_out : vs->out, "#EXT-X-DISCONTINUITY\n");

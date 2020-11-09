@@ -152,7 +152,7 @@ int ff_hls_write_file_entry(AVIOContext *out, int insert_discont,
         avio_printf(out, "#EXT-X-BYTERANGE:%"PRId64"@%"PRId64"\n", iframe_mode ? video_keyframe_size : size,
                     iframe_mode ? video_keyframe_pos : pos);
 
-    if (prog_date_time) {
+    if (prog_date_time && insert_discont) {
         time_t tt, wrongsecs;
         int milli;
         struct tm *tm, tmpbuf;
