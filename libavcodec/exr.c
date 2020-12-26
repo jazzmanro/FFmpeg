@@ -193,8 +193,7 @@ static union av_intfloat32 exr_half2float(uint16_t hf)
         // half-float NaNs will be converted to a single precision NaN
         // half-float Infs will be converted to a single precision Inf
         exp = FLOAT_MAX_BIASED_EXP;
-        if (mantissa)
-            mantissa = (1 << 23) - 1;    // set all bits to indicate a NaN
+        mantissa <<= 13; // preserve half-float NaN bits if set
     } else if (exp == 0x0) {
         // convert half-float zero/denorm to single precision value
         if (mantissa) {
@@ -1203,7 +1202,7 @@ static int decode_block(AVCodecContext *avctx, void *tdata,
                     }
                 } else if (s->pixel_type == EXR_HALF) {
                     // 16-bit
-                    if (c < 3) {
+                    if (c < 3 || !trc_func) {
                         for (x = 0; x < xsize; x++) {
                             *ptr_x++ = s->gamma_table[bytestream_get_le16(&src)];
                         }
@@ -1830,7 +1829,7 @@ static int decode_frame(AVCodecContext *avctx, void *data,
     // Zero out the start if ymin is not 0
     for (i = 0; i < planes; i++) {
         ptr = picture->data[i];
-        for (y = 0; y < s->ymin; y++) {
+        for (y = 0; y < FFMIN(s->ymin, s->h); y++) {
             memset(ptr, 0, out_line_size);
             ptr += picture->linesize[i];
         }
@@ -1842,13 +1841,14 @@ static int decode_frame(AVCodecContext *avctx, void *data,
 
     ymax = FFMAX(0, s->ymax + 1);
     // Zero out the end if ymax+1 is not h
-    for (i = 0; i < planes; i++) {
-        ptr = picture->data[i] + (ymax * picture->linesize[i]);
-        for (y = ymax; y < avctx->height; y++) {
-            memset(ptr, 0, out_line_size);
-            ptr += picture->linesize[i];
+    if (ymax < avctx->height)
+        for (i = 0; i < planes; i++) {
+            ptr = picture->data[i] + (ymax * picture->linesize[i]);
+            for (y = ymax; y < avctx->height; y++) {
+                memset(ptr, 0, out_line_size);
+                ptr += picture->linesize[i];
+            }
         }
-    }
 
     picture->pict_type = AV_PICTURE_TYPE_I;
     *got_frame = 1;

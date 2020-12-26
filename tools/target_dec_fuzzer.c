@@ -110,6 +110,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                           const AVPacket *avpkt) = NULL;
     AVCodecParserContext *parser = NULL;
     uint64_t keyframes = 0;
+    uint64_t flushpattern = -1;
     AVDictionary *opts = NULL;
 
     if (!c) {
@@ -149,7 +150,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     case AV_CODEC_ID_DST:         maxsamples /= 1<<20; break;
     case AV_CODEC_ID_DXV:         maxpixels  /= 32;    break;
     case AV_CODEC_ID_FFWAVESYNTH: maxsamples /= 16384; break;
-    case AV_CODEC_ID_G2M:         maxpixels  /= 64;    break;
+    case AV_CODEC_ID_G2M:         maxpixels  /= 1024;  break;
     case AV_CODEC_ID_GDV:         maxpixels  /= 512;   break;
     case AV_CODEC_ID_GIF:         maxpixels  /= 16;    break;
     case AV_CODEC_ID_HAP:         maxpixels  /= 128;   break;
@@ -239,6 +240,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         ctx->request_channel_layout             = bytestream2_get_le64(&gbc);
 
         ctx->idct_algo                          = bytestream2_get_byte(&gbc) % 25;
+        flushpattern                            = bytestream2_get_le64(&gbc);
 
         if (flags & 0x20) {
             switch (ctx->codec_id) {
@@ -331,6 +333,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             } else {
                 av_packet_move_ref(&avpkt, &parsepkt);
             }
+
+          if (!(flushpattern & 7))
+              avcodec_flush_buffers(ctx);
+          flushpattern = (flushpattern >> 3) + (flushpattern << 61);
 
           // Iterate through all data
           while (avpkt.size > 0 && it++ < maxiteration) {

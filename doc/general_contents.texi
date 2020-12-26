@@ -735,6 +735,8 @@ following image formats are supported:
 @item JPEG-LS      @tab X @tab X
 @item LJPEG        @tab X @tab
     @tab Lossless JPEG
+@item MSP          @tab   @tab X
+    @tab Microsoft Paint image
 @item PAM          @tab X @tab X
     @tab PAM is a PNM extension with alpha support.
 @item PBM          @tab X @tab X
@@ -972,7 +974,7 @@ following image formats are supported:
 @item MPEG-4 part 2 Microsoft variant version 1  @tab     @tab  X
 @item MPEG-4 part 2 Microsoft variant version 2  @tab  X  @tab  X
 @item MPEG-4 part 2 Microsoft variant version 3  @tab  X  @tab  X
-@item Newtek SpeedHQ               @tab     @tab  X
+@item Newtek SpeedHQ               @tab  X  @tab  X
 @item Nintendo Gamecube THP video  @tab     @tab  X
 @item NotchLC                @tab     @tab  X
 @item NuppelVideo/RTjpeg     @tab     @tab  X

@@ -136,6 +136,7 @@ static int nb_frames_dup = 0;
 static unsigned dup_warning = 1000;
 static int nb_frames_drop = 0;
 static int64_t decode_error_stat[2];
+static unsigned nb_output_dumped = 0;
 
 static int want_sdp = 1;
 
@@ -1685,6 +1686,7 @@ static void print_report(int is_last_report, int64_t timer_start, int64_t cur_ti
     double speed;
     int64_t pts = INT64_MIN + 1;
     static int64_t last_time = -1;
+    static int first_report = 1;
     static int qp_histogram[52];
     int hours, mins, secs, us;
     const char *hours_sign;
@@ -1697,9 +1699,9 @@ static void print_report(int is_last_report, int64_t timer_start, int64_t cur_ti
     if (!is_last_report) {
         if (last_time == -1) {
             last_time = cur_time;
-            return;
         }
-        if ((cur_time - last_time) < 500000)
+        if (((cur_time - last_time) < stats_period && !first_report) ||
+            (first_report && nb_output_dumped < nb_output_files))
             return;
         last_time = cur_time;
     }
@@ -1875,6 +1877,8 @@ static void print_report(int is_last_report, int64_t timer_start, int64_t cur_ti
                        "Error closing progress log, loss of information possible: %s\n", av_err2str(ret));
         }
     }
+
+    first_report = 0;
 
     if (is_last_report)
         print_final_stats(total_size);
@@ -2927,7 +2931,9 @@ static int init_input_stream(int ist_index, char *error, int error_len)
         ist->dec_ctx->opaque                = ist;
         ist->dec_ctx->get_format            = get_format;
         ist->dec_ctx->get_buffer2           = get_buffer;
+#if LIBAVCODEC_VERSION_MAJOR < 60
         ist->dec_ctx->thread_safe_callbacks = 1;
+#endif
 
         av_opt_set_int(ist->dec_ctx, "refcounted_frames", 1, 0);
         if (ist->dec_ctx->codec_id == AV_CODEC_ID_DVB_SUBTITLE &&
@@ -3013,6 +3019,7 @@ static int check_init_output_file(OutputFile *of, int file_index)
     of->header_written = 1;
 
     av_dump_format(of->ctx, file_index, of->ctx->url, 1);
+    nb_output_dumped++;
 
     if (sdp_filename || want_sdp)
         print_sdp();
@@ -3566,12 +3573,6 @@ static int init_output_stream(OutputStream *ost, AVFrame *frame,
                    "Error initializing the output stream codec context.\n");
             exit_program(1);
         }
-        /*
-         * FIXME: ost->st->codec should't be needed here anymore.
-         */
-        ret = avcodec_copy_context(ost->st->codec, ost->enc_ctx);
-        if (ret < 0)
-            return ret;
 
         if (ost->enc_ctx->nb_coded_side_data) {
             int i;
@@ -3616,8 +3617,6 @@ static int init_output_stream(OutputStream *ost, AVFrame *frame,
         // copy estimated duration as a hint to the muxer
         if (ost->st->duration <= 0 && ist && ist->st->duration > 0)
             ost->st->duration = av_rescale_q(ist->st->duration, ist->st->time_base, ost->st->time_base);
-
-        ost->st->codec->codec= ost->enc_ctx->codec;
     } else if (ost->stream_copy) {
         ret = init_output_stream_streamcopy(ost);
         if (ret < 0)
@@ -4009,7 +4008,7 @@ static int check_keyboard_interaction(int64_t cur_time)
     if (key == 'd' || key == 'D'){
         int debug=0;
         if(key == 'D') {
-            debug = input_streams[0]->st->codec->debug<<1;
+            debug = input_streams[0]->dec_ctx->debug << 1;
             if(!debug) debug = 1;
             while(debug & (FF_DEBUG_DCT_COEFF
 #if FF_API_DEBUG_MV
@@ -4032,7 +4031,7 @@ static int check_keyboard_interaction(int64_t cur_time)
                 fprintf(stderr,"error parsing debug value\n");
         }
         for(i=0;i<nb_input_streams;i++) {
-            input_streams[i]->st->codec->debug = debug;
+            input_streams[i]->dec_ctx->debug = debug;
         }
         for(i=0;i<nb_output_streams;i++) {
             OutputStream *ost = output_streams[i];
