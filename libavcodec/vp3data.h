@@ -25,7 +25,7 @@
 #include <stdlib.h>
 
 /* these coefficients dequantize intraframe Y plane coefficients
- * (note: same as JPEG) */
+ * (note: almost the same as JPEG) */
 static const uint8_t vp31_intra_y_dequant[64] = {
     16, 11, 10, 16,  24,  40,  51,  61,
     12, 12, 14, 19,  26,  58,  60,  55,
@@ -35,19 +35,6 @@ static const uint8_t vp31_intra_y_dequant[64] = {
     24, 35, 55, 64,  81, 104, 113,  92,
     49, 64, 78, 87, 103, 121, 120, 101,
     72, 92, 95, 98, 112, 100, 103,  99
-};
-
-/* these coefficients dequantize intraframe C plane coefficients
- * (note: same as JPEG) */
-static const uint8_t vp31_intra_c_dequant[64] = {
-    17, 18, 24, 47, 99, 99, 99, 99,
-    18, 21, 26, 66, 99, 99, 99, 99,
-    24, 26, 56, 99, 99, 99, 99, 99,
-    47, 66, 99, 99, 99, 99, 99, 99,
-    99, 99, 99, 99, 99, 99, 99, 99,
-    99, 99, 99, 99, 99, 99, 99, 99,
-    99, 99, 99, 99, 99, 99, 99, 99,
-    99, 99, 99, 99, 99, 99, 99, 99
 };
 
 /* these coefficients dequantize interframe coefficients (all planes) */
@@ -179,8 +166,7 @@ static const int16_t coeff_table_token_15[2] = { 5, -5 };
 static const int16_t coeff_table_token_16[2] = { 6, -6 };
 
 static const int16_t coeff_table_token_23_24_25_26_27_28_29[2] = { 1, -1 };
-static const int16_t coeff_table_token_30[4] = { 2, 3, -2, -3 };
-static const int16_t coeff_table_token_31[4] = { 2, 3, -2, -3 };
+static const int16_t coeff_table_token_30_31[4] = { 2, 3, -2, -3 };
 
 static const int16_t coeff_table_token_17[4] = {
     7, 8, -7, -8
@@ -377,8 +363,8 @@ static const int16_t *const coeff_tables[32] = {
     coeff_table_token_23_24_25_26_27_28_29,
     coeff_table_token_23_24_25_26_27_28_29,
     coeff_table_token_23_24_25_26_27_28_29,
-    coeff_table_token_30,
-    coeff_table_token_31
+    coeff_table_token_30_31,
+    coeff_table_token_30_31
 };
 
 static const uint8_t vp3_bias[5 * 16][32][2] = {

@@ -32,9 +32,11 @@
 #if HAVE_IO_H
 #include <io.h>
 #endif
+#include <inttypes.h>
 #include <stdarg.h>
+#include <stdio.h>
 #include <stdlib.h>
-#include "avutil.h"
+#include <string.h>
 #include "bprint.h"
 #include "common.h"
 #include "internal.h"
@@ -45,7 +47,7 @@ static AVMutex mutex = AV_MUTEX_INITIALIZER;
 
 #define LINE_SZ 1024
 
-#if HAVE_VALGRIND_VALGRIND_H
+#if HAVE_VALGRIND_VALGRIND_H && CONFIG_VALGRIND_BACKTRACE
 #include <valgrind/valgrind.h>
 /* this is the log level at which valgrind will output a full backtrace */
 #define BACKTRACE_LOGLEVEL AV_LOG_ERROR
