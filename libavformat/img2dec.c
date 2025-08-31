@@ -25,15 +25,17 @@
 #define _DEFAULT_SOURCE
 #define _BSD_SOURCE
 #include <sys/stat.h>
+#include "libavutil/avassert.h"
 #include "libavutil/avstring.h"
 #include "libavutil/log.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
-#include "libavutil/parseutils.h"
 #include "libavutil/intreadwrite.h"
 #include "libavcodec/gif.h"
 #include "avformat.h"
 #include "avio_internal.h"
+#include "demux.h"
 #include "internal.h"
 #include "img2.h"
 #include "os_support.h"
@@ -80,27 +82,6 @@ static int infer_size(int *width_ptr, int *height_ptr, int size)
     }
 
     return -1;
-}
-
-static int is_glob(const char *path)
-{
-#if HAVE_GLOB
-    size_t span = 0;
-    const char *p = path;
-
-    while (p = strchr(p, '%')) {
-        if (*(++p) == '%') {
-            ++p;
-            continue;
-        }
-        if (span = strspn(p, "*?[]{}"))
-            break;
-    }
-    /* Did we hit a glob char or get to the end? */
-    return span != 0;
-#else
-    return 0;
-#endif
 }
 
 /**
@@ -170,8 +151,6 @@ static int img_read_probe(const AVProbeData *p)
     if (p->filename && ff_guess_image2_codec(p->filename)) {
         if (av_filename_number_test(p->filename))
             return AVPROBE_SCORE_MAX;
-        else if (is_glob(p->filename))
-            return AVPROBE_SCORE_MAX;
         else if (p->filename[strcspn(p->filename, "*?{")]) // probably PT_GLOB
             return AVPROBE_SCORE_EXTENSION + 2; // score chosen to be a tad above the image pipes
         else if (p->buf_size == 0)
@@ -240,44 +219,9 @@ int ff_img_read_header(AVFormatContext *s1)
             if (s1->pb) {
                 s->pattern_type = PT_NONE;
             } else
-                s->pattern_type = PT_GLOB_SEQUENCE;
+                s->pattern_type = PT_SEQUENCE;
         }
-
-        if (s->pattern_type == PT_GLOB_SEQUENCE) {
-        s->use_glob = is_glob(s->path);
-        if (s->use_glob) {
-#if HAVE_GLOB
-            char *p = s->path, *q, *dup;
-            int gerr;
-#endif
-
-            av_log(s1, AV_LOG_WARNING, "Pattern type 'glob_sequence' is deprecated: "
-                   "use pattern_type 'glob' instead\n");
-#if HAVE_GLOB
-            dup = q = av_strdup(p);
-            while (*q) {
-                /* Do we have room for the next char and a \ insertion? */
-                if ((p - s->path) >= (sizeof(s->path) - 2))
-                  break;
-                if (*q == '%' && strspn(q + 1, "%*?[]{}"))
-                    ++q;
-                else if (strspn(q, "\\*?[]{}"))
-                    *p++ = '\\';
-                *p++ = *q++;
-            }
-            *p = 0;
-            av_free(dup);
-
-            gerr = glob(s->path, GLOB_NOCHECK|GLOB_BRACE|GLOB_NOMAGIC, NULL, &s->globstate);
-            if (gerr != 0) {
-                return AVERROR(ENOENT);
-            }
-            first_index = 0;
-            last_index = s->globstate.gl_pathc - 1;
-#endif
-        }
-        }
-        if ((s->pattern_type == PT_GLOB_SEQUENCE && !s->use_glob) || s->pattern_type == PT_SEQUENCE) {
+        if (s->pattern_type == PT_SEQUENCE) {
             if (find_image_range(s1->pb, &first_index, &last_index, s->path,
                                  s->start_number, s->start_number_range) < 0) {
                 av_log(s1, AV_LOG_ERROR,
@@ -301,7 +245,7 @@ int ff_img_read_header(AVFormatContext *s1)
                    "is not supported by this libavformat build\n");
             return AVERROR(ENOSYS);
 #endif
-        } else if (s->pattern_type != PT_GLOB_SEQUENCE && s->pattern_type != PT_NONE) {
+        } else if (s->pattern_type != PT_NONE) {
             av_log(s1, AV_LOG_ERROR,
                    "Unknown value '%d' for pattern_type option\n", s->pattern_type);
             return AVERROR(EINVAL);
@@ -322,9 +266,9 @@ int ff_img_read_header(AVFormatContext *s1)
     } else if (s1->audio_codec_id) {
         st->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
         st->codecpar->codec_id   = s1->audio_codec_id;
-    } else if (s1->iformat->raw_codec_id) {
+    } else if (ffifmt(s1->iformat)->raw_codec_id) {
         st->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
-        st->codecpar->codec_id   = s1->iformat->raw_codec_id;
+        st->codecpar->codec_id   = ffifmt(s1->iformat)->raw_codec_id;
     } else {
         const char *str = strrchr(s->path, '.');
         s->split_planes       = str && !av_strcasecmp(str + 1, "y");
@@ -351,13 +295,14 @@ int ff_img_read_header(AVFormatContext *s1)
             pd.filename = s1->url;
 
             while ((fmt = av_demuxer_iterate(&fmt_iter))) {
-                if (fmt->read_header != ff_img_read_header ||
-                    !fmt->read_probe ||
+                const FFInputFormat *fmt2 = ffifmt(fmt);
+                if (fmt2->read_header != ff_img_read_header ||
+                    !fmt2->read_probe ||
                     (fmt->flags & AVFMT_NOFILE) ||
-                    !fmt->raw_codec_id)
+                    !fmt2->raw_codec_id)
                     continue;
-                if (fmt->read_probe(&pd) > 0) {
-                    st->codecpar->codec_id = fmt->raw_codec_id;
+                if (fmt2->read_probe(&pd) > 0) {
+                    st->codecpar->codec_id = fmt2->raw_codec_id;
                     break;
                 }
             }
@@ -371,7 +316,7 @@ int ff_img_read_header(AVFormatContext *s1)
             st->codecpar->codec_id = ff_guess_image2_codec(s->path);
         if (st->codecpar->codec_id == AV_CODEC_ID_LJPEG)
             st->codecpar->codec_id = AV_CODEC_ID_MJPEG;
-        if (st->codecpar->codec_id == AV_CODEC_ID_ALIAS_PIX) // we cannot distingiush this from BRENDER_PIX
+        if (st->codecpar->codec_id == AV_CODEC_ID_ALIAS_PIX) // we cannot distinguish this from BRENDER_PIX
             st->codecpar->codec_id = AV_CODEC_ID_NONE;
     }
     if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO &&
@@ -458,7 +403,7 @@ int ff_img_read_packet(AVFormatContext *s1, AVPacket *pkt)
 
         if (par->codec_id == AV_CODEC_ID_NONE) {
             AVProbeData pd = { 0 };
-            const AVInputFormat *ifmt;
+            const FFInputFormat *ifmt;
             uint8_t header[PROBE_BUF_MIN + AVPROBE_PADDING_SIZE];
             int ret;
             int score = 0;
@@ -472,7 +417,7 @@ int ff_img_read_packet(AVFormatContext *s1, AVPacket *pkt)
             pd.buf_size = ret;
             pd.filename = filename;
 
-            ifmt = av_probe_input_format3(&pd, 1, &score);
+            ifmt = ffifmt(av_probe_input_format3(&pd, 1, &score));
             if (ifmt && ifmt->read_packet == ff_img_read_packet && ifmt->raw_codec_id)
                 par->codec_id = ifmt->raw_codec_id;
         }
@@ -502,6 +447,7 @@ int ff_img_read_packet(AVFormatContext *s1, AVPacket *pkt)
     pkt->flags       |= AV_PKT_FLAG_KEY;
     if (s->ts_from_file) {
         struct stat img_stat;
+        av_assert0(!s->is_pipe); // The ts_from_file option is not supported by piped input demuxers
         if (stat(filename, &img_stat)) {
             res = AVERROR(EIO);
             goto fail;
@@ -559,6 +505,7 @@ int ff_img_read_packet(AVFormatContext *s1, AVPacket *pkt)
         }
         goto fail;
     } else {
+        memset(pkt->data + pkt->size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
         s->img_count++;
         s->img_number++;
         s->pts++;
@@ -617,17 +564,16 @@ static int img_read_seek(AVFormatContext *s, int stream_index, int64_t timestamp
 
 #if CONFIG_IMAGE2_DEMUXER
 const AVOption ff_img_options[] = {
-    { "pattern_type", "set pattern type",                    OFFSET(pattern_type), AV_OPT_TYPE_INT,    {.i64=PT_DEFAULT}, 0,       INT_MAX, DEC, "pattern_type"},
-    { "glob_sequence","select glob/sequence pattern type",   0, AV_OPT_TYPE_CONST,  {.i64=PT_GLOB_SEQUENCE}, INT_MIN, INT_MAX, DEC, "pattern_type" },
-    { "glob",         "select glob pattern type",            0, AV_OPT_TYPE_CONST,  {.i64=PT_GLOB         }, INT_MIN, INT_MAX, DEC, "pattern_type" },
-    { "sequence",     "select sequence pattern type",        0, AV_OPT_TYPE_CONST,  {.i64=PT_SEQUENCE     }, INT_MIN, INT_MAX, DEC, "pattern_type" },
-    { "none",         "disable pattern matching",            0, AV_OPT_TYPE_CONST,  {.i64=PT_NONE         }, INT_MIN, INT_MAX, DEC, "pattern_type" },
+    { "pattern_type", "set pattern type",                    OFFSET(pattern_type), AV_OPT_TYPE_INT,    {.i64=PT_DEFAULT}, 0,       INT_MAX, DEC, .unit = "pattern_type"},
+    { "glob",         "select glob pattern type",            0, AV_OPT_TYPE_CONST,  {.i64=PT_GLOB         }, INT_MIN, INT_MAX, DEC, .unit = "pattern_type" },
+    { "sequence",     "select sequence pattern type",        0, AV_OPT_TYPE_CONST,  {.i64=PT_SEQUENCE     }, INT_MIN, INT_MAX, DEC, .unit = "pattern_type" },
+    { "none",         "disable pattern matching",            0, AV_OPT_TYPE_CONST,  {.i64=PT_NONE         }, INT_MIN, INT_MAX, DEC, .unit = "pattern_type" },
     { "start_number", "set first number in the sequence",    OFFSET(start_number), AV_OPT_TYPE_INT,    {.i64 = 0   }, INT_MIN, INT_MAX, DEC },
     { "start_number_range", "set range for looking at the first sequence number", OFFSET(start_number_range), AV_OPT_TYPE_INT, {.i64 = 5}, 1, INT_MAX, DEC },
-    { "ts_from_file", "set frame timestamp from file's one", OFFSET(ts_from_file), AV_OPT_TYPE_INT,    {.i64 = 0   }, 0, 2,       DEC, "ts_type" },
-    { "none", "none",                   0, AV_OPT_TYPE_CONST,    {.i64 = 0   }, 0, 2,       DEC, "ts_type" },
-    { "sec",  "second precision",       0, AV_OPT_TYPE_CONST,    {.i64 = 1   }, 0, 2,       DEC, "ts_type" },
-    { "ns",   "nano second precision",  0, AV_OPT_TYPE_CONST,    {.i64 = 2   }, 0, 2,       DEC, "ts_type" },
+    { "ts_from_file", "set frame timestamp from file's one", OFFSET(ts_from_file), AV_OPT_TYPE_INT,    {.i64 = 0   }, 0, 2,       DEC, .unit = "ts_type" },
+    { "none", "none",                   0, AV_OPT_TYPE_CONST,    {.i64 = 0   }, 0, 2,       DEC, .unit = "ts_type" },
+    { "sec",  "second precision",       0, AV_OPT_TYPE_CONST,    {.i64 = 1   }, 0, 2,       DEC, .unit = "ts_type" },
+    { "ns",   "nano second precision",  0, AV_OPT_TYPE_CONST,    {.i64 = 2   }, 0, 2,       DEC, .unit = "ts_type" },
     { "export_path_metadata", "enable metadata containing input path information", OFFSET(export_path_metadata), AV_OPT_TYPE_BOOL,   {.i64 = 0   }, 0, 1,       DEC }, \
     COMMON_OPTIONS
 };
@@ -638,17 +584,17 @@ static const AVClass img2_class = {
     .option     = ff_img_options,
     .version    = LIBAVUTIL_VERSION_INT,
 };
-const AVInputFormat ff_image2_demuxer = {
-    .name           = "image2",
-    .long_name      = NULL_IF_CONFIG_SMALL("image2 sequence"),
+const FFInputFormat ff_image2_demuxer = {
+    .p.name         = "image2",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("image2 sequence"),
+    .p.flags        = AVFMT_NOFILE,
+    .p.priv_class   = &img2_class,
     .priv_data_size = sizeof(VideoDemuxData),
     .read_probe     = img_read_probe,
     .read_header    = ff_img_read_header,
     .read_packet    = ff_img_read_packet,
     .read_close     = img_read_close,
     .read_seek      = img_read_seek,
-    .flags          = AVFMT_NOFILE,
-    .priv_class     = &img2_class,
 };
 #endif
 
@@ -664,13 +610,13 @@ static const AVClass imagepipe_class = {
 };
 
 #if CONFIG_IMAGE2PIPE_DEMUXER
-const AVInputFormat ff_image2pipe_demuxer = {
-    .name           = "image2pipe",
-    .long_name      = NULL_IF_CONFIG_SMALL("piped image2 sequence"),
+const FFInputFormat ff_image2pipe_demuxer = {
+    .p.name         = "image2pipe",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("piped image2 sequence"),
+    .p.priv_class   = &imagepipe_class,
     .priv_data_size = sizeof(VideoDemuxData),
     .read_header    = ff_img_read_header,
     .read_packet    = ff_img_read_packet,
-    .priv_class     = &imagepipe_class,
 };
 #endif
 
@@ -792,13 +738,14 @@ static int jpeg_probe(const AVProbeData *p)
                 return 0;
             state = EOI;
             break;
-        case DQT:
         case APP0:
-            if (AV_RL32(&b[i + 4]) == MKTAG('J','F','I','F'))
+            if (c == APP0 && AV_RL32(&b[i + 4]) == MKTAG('J','F','I','F'))
                 got_header = 1;
+            /* fallthrough */
         case APP1:
-            if (AV_RL32(&b[i + 4]) == MKTAG('E','x','i','f'))
+            if (c == APP1 && AV_RL32(&b[i + 4]) == MKTAG('E','x','i','f'))
                 got_header = 1;
+            /* fallthrough */
         case APP2:
         case APP3:
         case APP4:
@@ -813,6 +760,7 @@ static int jpeg_probe(const AVProbeData *p)
         case APP13:
         case APP14:
         case APP15:
+        case DQT: /* fallthrough */
         case COM:
             i += AV_RB16(&b[i + 2]) + 1;
             break;
@@ -1205,15 +1153,15 @@ static int vbn_probe(const AVProbeData *p)
 
 #define IMAGEAUTO_DEMUXER_0(imgname, codecid)
 #define IMAGEAUTO_DEMUXER_1(imgname, codecid)\
-const AVInputFormat ff_image_ ## imgname ## _pipe_demuxer = {\
-    .name           = AV_STRINGIFY(imgname) "_pipe",\
-    .long_name      = NULL_IF_CONFIG_SMALL("piped " AV_STRINGIFY(imgname) " sequence"),\
+const FFInputFormat ff_image_ ## imgname ## _pipe_demuxer = {\
+    .p.name         = AV_STRINGIFY(imgname) "_pipe",\
+    .p.long_name    = NULL_IF_CONFIG_SMALL("piped " AV_STRINGIFY(imgname) " sequence"),\
+    .p.priv_class   = &imagepipe_class,\
+    .p.flags        = AVFMT_GENERIC_INDEX,\
     .priv_data_size = sizeof(VideoDemuxData),\
     .read_probe     = imgname ## _probe,\
     .read_header    = ff_img_read_header,\
     .read_packet    = ff_img_read_packet,\
-    .priv_class     = &imagepipe_class,\
-    .flags          = AVFMT_GENERIC_INDEX, \
     .raw_codec_id   = codecid,\
 };
 
