@@ -4,6 +4,10 @@ releases are sorted from youngest to oldest.
 version <next>:
 - ffprobe -codec option
 - EXIF Metadata Parsing
+- gfxcapture: Windows.Graphics.Capture based window/monitor capture
+- hxvs demuxer for HXVS/HXVT IP camera format
+- MPEG-H 3D Audio decoding via mpeghdec
+- D3D12 H.264 encoder
 
 
 version 8.0:
@@ -39,6 +43,8 @@ version 8.0:
 - AV1 Vulkan encoder
 - ProRes RAW decoder
 - ProRes RAW Vulkan hwaccel
+- ffprobe -codec option
+- HDR10+ metadata passthrough when decoding/encoding with libaom-av1
 
 
 version 7.1:

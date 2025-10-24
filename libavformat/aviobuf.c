@@ -125,8 +125,8 @@ AVIOContext *avio_alloc_context(
 
 void avio_context_free(AVIOContext **ps)
 {
-    if (ps && *ps) {
-        AVIOContext *s = *ps;
+    AVIOContext *s = *ps;
+    if (s) {
         av_freep(&s->protocol_whitelist);
         av_freep(&s->protocol_blacklist);
     }
@@ -311,7 +311,7 @@ int64_t avio_seek(AVIOContext *s, int64_t offset, int whence)
         ctx->seek_count++;
         if (!s->write_flag)
             s->buf_end = s->buffer;
-        s->buf_ptr = s->buf_ptr_max = s->buffer;
+        s->checksum_ptr = s->buf_ptr = s->buf_ptr_max = s->buffer;
         s->pos = offset;
     }
     s->eof_reached = 0;
