@@ -57,6 +57,8 @@ typedef struct SRTContext {
     int eid;
     int64_t rw_timeout;
     int64_t listen_timeout;
+    int64_t lastStatsTime;
+    int64_t stats;
     int recv_buffer_size;
     int send_buffer_size;
 
@@ -101,6 +103,7 @@ typedef struct SRTContext {
 static const AVOption libsrt_options[] = {
     { "timeout",        "Timeout of socket I/O operations (in microseconds)",                   OFFSET(rw_timeout),       AV_OPT_TYPE_INT64, { .i64 = -1 }, -1, INT64_MAX, .flags = D|E },
     { "listen_timeout", "Connection awaiting timeout (in microseconds)" ,                       OFFSET(listen_timeout),   AV_OPT_TYPE_INT64, { .i64 = -1 }, -1, INT64_MAX, .flags = D|E },
+    { "stats",          "Show SRT statistics in the log output",                                OFFSET(stats),            AV_OPT_TYPE_INT64, { .i64 = -1 }, -1, INT64_MAX, .flags = D|E },
     { "send_buffer_size", "Socket send buffer size (in bytes)",                                 OFFSET(send_buffer_size), AV_OPT_TYPE_INT,      { .i64 = -1 }, -1, INT_MAX,   .flags = D|E },
     { "recv_buffer_size", "Socket receive buffer size (in bytes)",                              OFFSET(recv_buffer_size), AV_OPT_TYPE_INT,      { .i64 = -1 }, -1, INT_MAX,   .flags = D|E },
     { "pkt_size",       "Maximum SRT packet size",                                              OFFSET(payload_size),     AV_OPT_TYPE_INT,      { .i64 = -1 }, -1, SRT_LIVE_MAX_PAYLOAD_SIZE, .flags = D|E, .unit = "payload_size" },
@@ -157,6 +160,29 @@ static int libsrt_neterrno(URLContext *h)
         return AVERROR(EAGAIN);
     av_log(h, AV_LOG_ERROR, "%s\n", srt_getlasterror_str());
     return os_errno ? AVERROR(os_errno) : AVERROR_UNKNOWN;
+}
+
+static int libsrt_stats(URLContext *h,int read)
+{
+    SRTContext *s = h->priv_data;
+    SRT_TRACEBSTATS trace;
+
+    int ret = srt_bistats(s->fd, &trace, 0,1);
+    int64_t timeNow = trace.msTimeStamp;
+    int64_t timeNext = s->lastStatsTime + s->stats;
+
+    if((ret >= 0) && (timeNow > timeNext )){
+        s->lastStatsTime = timeNow;
+
+        if(read > 0){
+            av_log(h, AV_LOG_INFO, "[srt-stats] rate=%.2fMbps bw=%.2fMbps rtt=%.2fms total=%jdpkts retrans=%jdpkts loss=%jdpkts \n", trace.mbpsRecvRate,trace.mbpsBandwidth,trace.msRTT,trace.pktRecvTotal,trace.pktRcvRetrans,trace.pktRcvLossTotal);
+        }
+        else{
+            av_log(h, AV_LOG_INFO, "[srt-stats] rate=%.2fMbps bw=%.2fMbps rtt=%.2fms total=%jdpkts retrans=%jdpkts loss=%jdpkts \n", trace.mbpsSendRate,trace.mbpsBandwidth,trace.msRTT,trace.pktSentTotal,trace.pktRetrans,trace.pktSndLossTotal);
+        }
+    }
+
+    return 0;
 }
 
 static int libsrt_getsockopt(URLContext *h, int fd, SRT_SOCKOPT optname, const char * optnamestr, void * optval, int * optlen)
@@ -551,6 +577,10 @@ static int libsrt_read(URLContext *h, uint8_t *buf, int size)
     SRTContext *s = h->priv_data;
     int ret;
 
+    if(s->stats > 0){
+        libsrt_stats(h,1);
+    }
+
     if (!(h->flags & AVIO_FLAG_NONBLOCK)) {
         ret = libsrt_network_wait_fd_timeout(h, s->eid, 0, h->rw_timeout, &h->interrupt_callback);
         if (ret)
@@ -569,6 +599,10 @@ static int libsrt_write(URLContext *h, const uint8_t *buf, int size)
 {
     SRTContext *s = h->priv_data;
     int ret;
+
+    if(s->stats > 0){
+        libsrt_stats(h,0);
+    }
 
     if (!(h->flags & AVIO_FLAG_NONBLOCK)) {
         ret = libsrt_network_wait_fd_timeout(h, s->eid, 1, h->rw_timeout, &h->interrupt_callback);
