@@ -2523,7 +2523,7 @@ static int mov_write_gama_tag(AVFormatContext *s, AVIOContext *pb, MOVTrack *tra
 {
     uint32_t gama = 0;
     if (gamma <= 0.0)
-        gamma = av_csp_approximate_trc_gamma(track->par->color_trc);
+        gamma = av_csp_approximate_eotf_gamma(track->par->color_trc);
     av_log(s, AV_LOG_DEBUG, "gamma value %g\n", gamma);
 
     if (gamma > 1e-6) {
@@ -6536,7 +6536,8 @@ static int mov_flush_fragment(AVFormatContext *s, int force)
             mov->tracks[i].data_offset = pos + moov_size + 8;
 
         avio_write_marker(s->pb, AV_NOPTS_VALUE, AVIO_DATA_MARKER_HEADER);
-        if (mov->flags & FF_MOV_FLAG_DELAY_MOOV)
+        if (mov->flags & FF_MOV_FLAG_DELAY_MOOV &&
+            !(mov->flags & FF_MOV_FLAG_HYBRID_FRAGMENTED))
             mov_write_identification(s->pb, s);
         if ((ret = mov_write_moov_tag(s->pb, mov, s)) < 0)
             return ret;
@@ -8413,7 +8414,8 @@ static int mov_write_header(AVFormatContext *s)
         }
     }
 
-    if (!(mov->flags & FF_MOV_FLAG_DELAY_MOOV)) {
+    if (!(mov->flags & FF_MOV_FLAG_DELAY_MOOV) ||
+        (mov->flags & FF_MOV_FLAG_HYBRID_FRAGMENTED)) {
         if ((ret = mov_write_identification(pb, s)) < 0)
             return ret;
     }
